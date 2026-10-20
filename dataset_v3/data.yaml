@@ -1,0 +1,14 @@
+path: /home/err/Proyectos/yolo_dofus/dataset_v3
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 2
+names: ['Enemigos', 'Personaje']
+
+roboflow:
+  workspace: nolger-rodriguez
+  project: dofus-orfkf
+  version: 3
+  license: Private
+  url: https://app.roboflow.com/nolger-rodriguez/dofus-orfkf/3
