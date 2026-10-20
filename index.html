@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YOLO Dofus - Detección en Tiempo Real</title>
+  <style>
+    :root {
+      --bg-dark: #0f111a;
+      --card-bg: #1a1d2c;
+      --card-border: #282d45;
+      --accent-blue: #3b82f6;
+      --accent-red: #ef4444;
+      --accent-gold: #f59e0b;
+      --accent-cyan: #06b6d4;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 0 1rem 3rem;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* HEADER */
+    header {
+      text-align: center;
+      padding: 3.5rem 1rem 2rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      background: rgba(59, 130, 246, 0.15);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      border-radius: 9999px;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: 2.75rem;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin-bottom: 0.75rem;
+      background: linear-gradient(135deg, #ffffff 40%, #93c5fd 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      max-width: 750px;
+      margin: 0 auto 1.75rem;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.4rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      color: #ffffff;
+      border: none;
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #1d4ed8, #1e40af);
+      transform: translateY(-2px);
+    }
+
+    .btn-secondary {
+      background: var(--card-bg);
+      color: var(--text-main);
+      border: 1px solid var(--card-border);
+    }
+    .btn-secondary:hover {
+      background: #23273c;
+      border-color: #3b82f6;
+    }
+
+    /* AUTHORS */
+    .authors-section {
+      margin: 2rem 0 3rem;
+    }
+    .authors-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.25rem;
+    }
+    .author-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      transition: border-color 0.2s;
+    }
+    .author-card:hover {
+      border-color: var(--accent-blue);
+    }
+    .author-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+    }
+    .author-info h3 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .author-info p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* VIDEO SECTION */
+    .video-section {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 3rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .video-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .video-header h2 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .video-wrapper {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+      aspect-ratio: 16 / 9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* INFO GRIDS */
+    .section-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 1.25rem;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+      margin-bottom: 3rem;
+    }
+    .info-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .info-card h3 {
+      font-size: 1.15rem;
+      margin-bottom: 0.75rem;
+      color: #93c5fd;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .info-card ul {
+      list-style-type: none;
+    }
+    .info-card li {
+      margin-bottom: 0.5rem;
+      font-size: 0.92rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+    .info-card li strong {
+      color: var(--text-main);
+    }
+    .bullet {
+      color: var(--accent-blue);
+      font-weight: bold;
+    }
+
+    /* CLASSES TAGS */
+    .class-badge {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      margin-right: 0.4rem;
+    }
+    .class-personaje {
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .class-enemigos {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    /* SHORTCUTS TABLE */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+    }
+    th, td {
+      padding: 0.6rem 0.8rem;
+      text-align: left;
+      border-bottom: 1px solid var(--card-border);
+    }
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    td code {
+      background: #111422;
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      color: #f59e0b;
+      font-family: monospace;
+    }
+
+    /* FOOTER */
+    footer {
+      text-align: center;
+      padding: 2.5rem 0 1rem;
+      border-top: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    footer a {
+      color: var(--accent-blue);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+
+    <!-- HEADER -->
+    <header>
+      <div class="badge">Visión Artificial & YOLO11</div>
+      <h1>YOLO Dofus: Detección en Tiempo Real</h1>
+      <p class="subtitle">
+        Sistema autónomo de detección de Personajes y Enemigos en Dofus usando YOLO11, datasets gestionados en Roboflow MCP y captura nativa acelerada sobre Arch Linux y GNOME Wayland.
+      </p>
+
+      <div class="actions">
+        <a href="https://github.com/Nolger64/yolo_dofus" target="_blank" class="btn btn-primary">
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          Repositorio en GitHub
+        </a>
+        <a href="#demo" class="btn btn-secondary">
+          ▶ Ver Video de Demostración
+        </a>
+      </div>
+    </header>
+
+    <!-- ESTUDIANTES / AUTORES -->
+    <section class="authors-section">
+      <div class="authors-grid">
+        <div class="author-card">
+          <div class="author-avatar">NR</div>
+          <div class="author-info">
+            <h3>Nolger Rodríguez</h3>
+            <p>Estudiante / Desarrollador</p>
+          </div>
+        </div>
+        <div class="author-card">
+          <div class="author-avatar">YP</div>
+          <div class="author-info">
+            <h3>Yoed Potillo</h3>
+            <p>Estudiante / Desarrollador</p>
+          </div>
+        </div>
+        <div class="author-card">
+          <div class="author-avatar">RP</div>
+          <div class="author-info">
+            <h3>Rafael Pereira</h3>
+            <p>Estudiante / Desarrollador</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIDEO DEMO -->
+    <section id="demo" class="video-section">
+      <div class="video-header">
+        <h2>🎥 Demostración del Modelo en Vivo</h2>
+        <div>
+          <span class="class-badge class-personaje">🟦 Personaje</span>
+          <span class="class-badge class-enemigos">🟥 Enemigos</span>
+        </div>
+      </div>
+      <div class="video-wrapper">
+        <video controls autoplay muted loop playsinline>
+          <source src="demo.mp4" type="video/mp4">
+          <source src="Grabaci%C3%B3n%20de%20pantalla%20desde%202026-10-20%2001-14-35.mp4" type="video/mp4">
+          Tu navegador no soporta la reproducción de video HTML5. Puedes ver el archivo en el repositorio.
+        </video>
+      </div>
+    </section>
+
+    <!-- DETALLES TÉCNICOS -->
+    <h2 class="section-title">⚙️ Arquitectura y Flujo Técnico</h2>
+    <div class="info-grid">
+
+      <!-- CARD 1 -->
+      <div class="info-card">
+        <h3>📦 Dataset & Roboflow MCP</h3>
+        <ul>
+          <li><span class="bullet">▪</span> <strong>Conexión MCP:</strong> Integración vía Model Context Protocol oficial (mcp.roboflow.com).</li>
+          <li><span class="bullet">▪</span> <strong>Versión 3:</strong> 208 imágenes (149 train, 38 valid, 21 test).</li>
+          <li><span class="bullet">▪</span> <strong>Clases:</strong> <span class="class-badge class-personaje">Personaje</span> y <span class="class-badge class-enemigos">Enemigos</span>.</li>
+          <li><span class="bullet">▪</span> <strong>Preprocesado:</strong> Normalizado a 512×512 píxeles con auto-orientación.</li>
+        </ul>
+      </div>
+
+      <!-- CARD 2 -->
+      <div class="info-card">
+        <h3>🚀 Entrenamiento Acelerado</h3>
+        <ul>
+          <li><span class="bullet">▪</span> <strong>Modelo:</strong> YOLO11 Nano (5.4 MB), ultraligero y de baja latencia.</li>
+          <li><span class="bullet">▪</span> <strong>Hardware:</strong> Google Colab con acelerador GPU NVIDIA T4.</li>
+          <li><span class="bullet">▪</span> <strong>Rendimiento:</strong> 50 épocas completadas en menos de 2 minutos.</li>
+          <li><span class="bullet">▪</span> <strong>Pesos:</strong> Exportación a <code>best.pt</code> para inferencia local.</li>
+        </ul>
+      </div>
+
+      <!-- CARD 3 -->
+      <div class="info-card">
+        <h3>🐧 Arch Linux & GNOME Wayland</h3>
+        <ul>
+          <li><span class="bullet">▪</span> <strong>PipeWire Nativo:</strong> Sin pantallas negras por restricciones de X11 en Wayland.</li>
+          <li><span class="bullet">▪</span> <strong>Portal XDG:</strong> Selección interactiva de la ventana de Dofus con diálogo nativo.</li>
+          <li><span class="bullet">▪</span> <strong>Alto Rendimiento:</strong> Inferencia a altos FPS con HUD informativo en pantalla.</li>
+          <li><span class="bullet">▪</span> <strong>Sin Advertencias:</strong> Supresión de errores de fuentes de Qt/QFontDatabase.</li>
+        </ul>
+      </div>
+
+      <!-- CARD 4 -->
+      <div class="info-card">
+        <h3>🎮 Controles del Detector en Vivo</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Tecla</th>
+              <th>Función</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>Q</code> o <code>ESC</code></td>
+              <td>Salir del detector</td>
+            </tr>
+            <tr>
+              <td><code>P</code></td>
+              <td>Pausar / Reanudar detección</td>
+            </tr>
+            <tr>
+              <td><code>S</code></td>
+              <td>Cambiar o re-seleccionar ventana</td>
+            </tr>
+            <tr>
+              <td><code>+</code> / <code>-</code></td>
+              <td>Ajustar umbral de confianza en tiempo real</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+      <p>Proyecto Universitario de Visión por Computadora — <strong>Dofus YOLO</strong></p>
+      <p style="margin-top: 0.35rem;">
+        Repositorio: <a href="https://github.com/Nolger64/yolo_dofus" target="_blank">github.com/Nolger64/yolo_dofus</a>
+      </p>
+    </footer>
+
+  </div>
+
+</body>
+</html>
