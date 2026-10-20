@@ -1,201 +1,166 @@
 #!/usr/bin/env python3
 """
-Detector en tiempo real para Dofus usando YOLO y selección de ventana en Arch Linux / GNOME.
-Permite seleccionar el área o ventana del juego, captura a altos FPS con MSS y dibuja las
-detecciones de Personajes y Enemigos.
+Detector en tiempo real para Dofus en Arch Linux con GNOME Wayland.
+Utiliza xdg-desktop-portal y PipeWire nativo para capturar la ventana del juego
+sin pantallas negras, sin advertencias de fuentes Qt y con máximo rendimiento.
 """
 
 import os
 import sys
-import json
+
+# Suprimir advertencias internas de Qt y OpenCV en GNOME Wayland
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.*=false;qt.text.*=false;*.warning=false"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 import time
 import argparse
 import numpy as np
 import cv2
-import mss
 from ultralytics import YOLO
 
-CONFIG_FILE = "window_config.json"
+try:
+    from pipewire_capture import PortalCapture, CaptureStream, is_available
+    HAS_PIPEWIRE = is_available()
+except ImportError:
+    HAS_PIPEWIRE = False
 
-def load_saved_roi():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                data = json.load(f)
-                return data.get("roi")
-        except Exception:
-            pass
-    return None
+# Colores para visualización (BGR)
+# Personaje: Azul vivo | Enemigos: Rojo brillante
+CLASS_COLORS = {
+    "Personaje": (255, 140, 0),
+    "personaje": (255, 140, 0),
+    "Enemigos": (0, 0, 255),
+    "enemigos": (0, 0, 255)
+}
+DEFAULT_COLOR = (0, 255, 0)
 
-def save_roi(roi):
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({"roi": roi}, f, indent=2)
-        print(f"[+] Coordenadas de ventana guardadas en {CONFIG_FILE}")
-    except Exception as e:
-        print(f"[!] No se pudo guardar configuración: {e}")
-
-def select_window_roi():
-    """
-    Captura la pantalla completa y abre una interfaz para que el usuario
-    arrastre un recuadro sobre la ventana de Dofus con el ratón.
-    """
-    print("\n[i] Capturando pantalla para selección de ventana...")
-    with mss.mss() as sct:
-        # Tomamos el monitor principal
-        mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-        raw_shot = sct.grab(mon)
-        screen_img = np.array(raw_shot)
-        screen_bgr = cv2.cvtColor(screen_img, cv2.COLOR_BGRA2BGR)
-
-    h_orig, w_orig = screen_bgr.shape[:2]
-    
-    # Si la pantalla es 4K / HiDPI (como 3840x2400), escalamos para la vista de selección
-    scale = 1.0
-    if w_orig > 1920:
-        scale = 1920.0 / w_orig
-        preview = cv2.resize(screen_bgr, (int(w_orig * scale), int(h_orig * scale)))
-    else:
-        preview = screen_bgr.copy()
-
-    window_title = "Selecciona la ventana de Dofus (Arrastra con el raton y pulsa ENTER o ESPACIO)"
-    cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
-    
-    print("------------------------------------------------------------------")
-    print(" 1. Arrastra con el ratón para encerrar la ventana del juego.")
-    print(" 2. Presiona ENTER o BARRA ESPACIADORA para confirmar.")
-    print(" 3. Presiona 'c' para cancelar.")
-    print("------------------------------------------------------------------")
-    
-    r = cv2.selectROI(window_title, preview, showCrosshair=True, fromCenter=False)
-    cv2.destroyWindow(window_title)
-
-    x, y, w, h = r
-    if w <= 10 or h <= 10:
-        print("[!] Selección cancelada o área demasiado pequeña.")
-        return None
-
-    # Re-escalar coordenadas reales de la pantalla
-    real_x = int(x / scale) + mon["left"]
-    real_y = int(y / scale) + mon["top"]
-    real_w = int(w / scale)
-    real_h = int(h / scale)
-
-    roi = {"left": real_x, "top": real_y, "width": real_w, "height": real_h}
-    save_roi(roi)
-    return roi
-
-def draw_hud(frame, fps, count_personajes, count_enemigos, conf_thresh):
-    """Dibuja un panel superior con estadísticas y controles."""
+def draw_hud(frame, fps, count_personajes, count_enemigos, conf_thresh, paused):
+    """Dibuja el panel superior con contadores y estado."""
     h, w = frame.shape[:2]
-    
-    # Barra semitransparente superior
     overlay = frame.copy()
-    cv2.rectangle(overlay, (0, 0), (w, 42), (20, 20, 20), -1)
+    cv2.rectangle(overlay, (0, 0), (w, 44), (25, 25, 25), -1)
     cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
-    # Texto de estadísticas
-    stats_text = f"FPS: {fps:4.1f} | Personajes: {count_personajes} | Enemigos: {count_enemigos} | Conf: {conf_thresh:.2f}"
-    cv2.putText(frame, stats_text, (15, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
-    
-    # Ayuda rápida en esquina derecha
-    help_text = "[S] Re-seleccionar | [P] Pausa | [+/-] Conf | [Q] Salir"
-    cv2.putText(frame, help_text, (w - 480, 27), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
+    status_str = "PAUSADO" if paused else f"{fps:4.1f} FPS"
+    text = f"[{status_str}]  Personajes: {count_personajes} | Enemigos: {count_enemigos} | Conf: {conf_thresh:.2f}"
+    cv2.putText(frame, text, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+
+    shortcuts = "[P] Pausa | [S] Cambiar Ventana | [+/-] Conf | [Q] Salir"
+    cv2.putText(frame, shortcuts, (max(15, w - 490), 28), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 180, 180), 1, cv2.LINE_AA)
+
+def find_model(model_arg):
+    if os.path.exists(model_arg):
+        return model_arg
+    candidates = [
+        "best.pt"
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
 
 def main():
-    parser = argparse.ArgumentParser(description="Detector en vivo de Dofus con YOLO")
-    parser.add_argument("--model", type=str, default="best.pt", help="Ruta a los pesos del modelo (.pt)")
-    parser.add_argument("--conf", type=float, default=0.35, help="Umbral de confianza inicial (0.1 a 0.95)")
-    parser.add_argument("--reselect", action="store_true", help="Forzar re-selección del área de la ventana")
+    parser = argparse.ArgumentParser(description="Detector en vivo de Dofus (GNOME Wayland)")
+    parser.add_argument("--model", type=str, default="best.pt", help="Ruta a los pesos (.pt)")
+    parser.add_argument("--conf", type=float, default=0.35, help="Umbral de confianza (0.1 a 0.95)")
     args = parser.parse_args()
 
-    # Buscar el modelo si no existe el especificado
-    model_path = args.model
-    if not os.path.exists(model_path):
-        # Buscar en rutas comunes
-        alternatives = [
-            "runs/detect/dofus_v3/weights/best.pt",
-            "best.pt",
-            "yolo11n.pt"
-        ]
-        found = False
-        for alt in alternatives:
-            if os.path.exists(alt):
-                model_path = alt
-                found = True
-                break
-        if not found:
-            print(f"[!] No se encontró '{args.model}'.")
-            print("    Descarga el 'best.pt' desde Google Colab y colócalo en esta carpeta:")
-            print(f"    {os.path.abspath('.')}/best.pt")
-            print("    (Usando temporalmente 'yolo11n.pt' base para verificar la captura si está disponible)")
-            if os.path.exists("yolo11n.pt"):
-                model_path = "yolo11n.pt"
-            else:
-                sys.exit(1)
+    if not HAS_PIPEWIRE:
+        print("[!] Error crítico: pipewire_capture no está disponible o el compositor no soporta screencast.")
+        print("    Asegúrate de tener xdg-desktop-portal-gnome y pipewire instalados.")
+        sys.exit(1)
 
-    print(f"[+] Cargando modelo: {model_path}...")
+    model_path = find_model(args.model)
+    if not model_path:
+        print(f"[!] No se encontró ningún modelo ({args.model} ni yolo11n.pt).")
+        print("    Descarga tu 'best.pt' desde Google Colab y colócalo en esta carpeta:")
+        print(f"    {os.path.abspath('.')}/best.pt")
+        sys.exit(1)
+
+    print(f"[+] Cargando modelo YOLO: {model_path}...")
     model = YOLO(model_path)
 
-    # Colores por clase (BGR)
-    # Personaje -> Azul brillante (255, 120, 0)
-    # Enemigos -> Rojo / Magenta (0, 0, 255)
-    CLASS_COLORS = {
-        "Personaje": (255, 120, 0),
-        "personaje": (255, 120, 0),
-        "Enemigos": (0, 0, 255),
-        "enemigos": (0, 0, 255)
-    }
-    DEFAULT_COLOR = (0, 255, 0)
+    portal = PortalCapture()
+    session = None
+    stream = None
 
-    # Cargar o pedir ROI
-    roi = None
-    if not args.reselect:
-        roi = load_saved_roi()
-        if roi:
-            print(f"[+] Región de ventana cargada desde configuración: {roi}")
+    def start_window_capture():
+        nonlocal session, stream
+        if stream:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+        if session:
+            try:
+                session.close()
+            except Exception:
+                pass
 
-    if roi is None:
-        roi = select_window_roi()
-        if roi is None:
-            print("[!] Operación abortada.")
-            return
+        print("\n--------------------------------------------------------------")
+        print("[*] Abriendo el selector nativo de GNOME Wayland...")
+        print("    Haz clic en la ventana de Dofus y pulsa 'Compartir'.")
+        print("--------------------------------------------------------------")
+        
+        session = portal.select_window()
+        if not session:
+            print("[!] Selección cancelada por el usuario.")
+            return False
 
-    cv2.namedWindow("Deteccion Dofus - YOLO", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Deteccion Dofus - YOLO", min(roi["width"], 1280), min(roi["height"], 720))
+        print(f"[+] Ventana seleccionada: {session.width}x{session.height} px")
+        # capture_interval=0.01 asegura captura fluida a máximos FPS
+        stream = CaptureStream(session.fd, session.node_id, session.width, session.height, capture_interval=0.01)
+        stream.start()
+        return True
+
+    if not start_window_capture():
+        print("[!] No se seleccionó ninguna ventana. Saliendo...")
+        return
+
+    window_name = "Deteccion Dofus - GNOME Wayland"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, min(session.width, 1280), min(session.height, 720))
 
     conf_thresh = args.conf
     paused = False
     prev_time = time.time()
     fps = 0.0
 
-    print("\n[+] Captura iniciada. Enfócate en el juego.")
+    print("\n[+] Captura activa con PipeWire.")
     print("    Comandos en la ventana de detección:")
     print("      'q' o ESC : Salir")
-    print("      's'       : Re-seleccionar ventana de Dofus")
-    print("      'p'       : Pausar / Continuar")
-    print("      '+' o '=' : Aumentar confianza")
-    print("      '-'       : Disminuir confianza\n")
+    print("      's'       : Cambiar / re-seleccionar ventana")
+    print("      'p'       : Pausar / Reanudar detección")
+    print("      '+' o '=' : Subir confianza")
+    print("      '-'       : Bajar confianza\n")
 
-    with mss.mss() as sct:
+    try:
         while True:
             curr_time = time.time()
             fps = 1.0 / max(curr_time - prev_time, 1e-5)
             prev_time = curr_time
 
+            # Verificar si la ventana seleccionada se cerró
+            if stream.window_invalid:
+                print("[!] La ventana seleccionada ya no es válida o fue cerrada.")
+                if not start_window_capture():
+                    break
+                continue
+
+            # Obtener el fotograma capturado
+            frame_bgra = stream.get_frame()
+            if frame_bgra is None:
+                time.sleep(0.01)
+                continue
+
+            frame_bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+            count_personajes = 0
+            count_enemigos = 0
+
             if not paused:
-                # 1. Capturar la región de la ventana
-                raw_frame = sct.grab(roi)
-                frame = np.array(raw_frame)
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-
-                # 2. Inferencia con YOLO
+                # Inferencia con YOLO
                 results = model.predict(frame_bgr, conf=conf_thresh, imgsz=512, verbose=False)
-                
-                count_personajes = 0
-                count_enemigos = 0
 
-                # 3. Dibujar detecciones
                 for r in results:
                     boxes = r.boxes
                     for box in boxes:
@@ -213,32 +178,23 @@ def main():
 
                         # Bounding box
                         cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
-                        
-                        # Etiqueta con fondo
+
+                        # Etiqueta
                         label = f"{cls_name} {conf:.2f}"
                         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                         cv2.rectangle(frame_bgr, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
                         cv2.putText(frame_bgr, label, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
-                # 4. Dibujar HUD informativo
-                draw_hud(frame_bgr, fps, count_personajes, count_enemigos, conf_thresh)
-                cv2.imshow("Deteccion Dofus - YOLO", frame_bgr)
-            else:
-                # Si está pausado, solo esperar teclas
-                pass
+            draw_hud(frame_bgr, fps, count_personajes, count_enemigos, conf_thresh, paused)
+            cv2.imshow(window_name, frame_bgr)
 
-            # Manejo de teclas
             key = cv2.waitKey(1) & 0xFF
-            if key in [ord('q'), 27]: # 'q' o ESC
+            if key in [ord('q'), 27]:
                 break
             elif key == ord('s'):
-                new_roi = select_window_roi()
-                if new_roi:
-                    roi = new_roi
-                    cv2.resizeWindow("Deteccion Dofus - YOLO", min(roi["width"], 1280), min(roi["height"], 720))
+                start_window_capture()
             elif key == ord('p'):
                 paused = not paused
-                print(f"[i] {'Pausado' if paused else 'Reanudado'}")
             elif key in [ord('+'), ord('=')]:
                 conf_thresh = min(0.95, conf_thresh + 0.05)
                 print(f"[i] Confianza: {conf_thresh:.2f}")
@@ -246,8 +202,13 @@ def main():
                 conf_thresh = max(0.10, conf_thresh - 0.05)
                 print(f"[i] Confianza: {conf_thresh:.2f}")
 
-    cv2.destroyAllWindows()
-    print("[+] Programa finalizado.")
+    finally:
+        if stream:
+            stream.stop()
+        if session:
+            session.close()
+        cv2.destroyAllWindows()
+        print("[+] Detector cerrado correctamente.")
 
 if __name__ == "__main__":
     main()
